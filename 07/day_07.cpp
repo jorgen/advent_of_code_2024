@@ -1,128 +1,181 @@
 #include <cstdio>
 #include <string>
-#include <tuple>
 #include <format>
-#include <array>
 #include <vector>
+#include <optional>
 
-bool is_move_possible(int pos, int width, int data_size, int target_pos)
+template <typename T>
+auto parse_int(const std::string_view &sv) -> std::optional<T>
 {
-  if (target_pos < 0 || target_pos >= data_size)
+  if (sv[0] == ' ' || sv.back() == ' ')
   {
-    return false;
+    return std::nullopt;
   }
 
-  if (std::abs(pos - target_pos) == 1 && pos / width != target_pos / width)
-  {
-    return false;
-  }
+  T result = 0;
+  auto [ptr, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), result);
 
-  return true;
+  if (ec == std::errc())
+    return result;
+
+  return std::nullopt; // Return empty optional on error
 }
 
-enum class direction_t
+std::vector<std::string_view> delimit(const std::string_view data, const char delimiter)
 {
-  up,
-  right,
-  down,
-  left,
-  max
-};
-
-enum class loop_detection_t
-{
-  none,
-  loop
-};
-
-std::pair<loop_detection_t, int> walk_guard(int width, const std::string &data, const std::array<int, static_cast<size_t>(direction_t::max)> &moves, int pos, direction_t direction, std::vector<uint8_t> &visited)
-{
-  int unique_steps = 1;
-  auto max_steps = int(data.size() * 2);
-  for (int i = 0; i < max_steps; i++)
+  std::vector<std::string_view> result;
+  size_t next_delimiter = data.find(delimiter);
+  size_t current_pos = 0;
+  while (next_delimiter != std::string::npos)
   {
-    auto target_pos = pos + moves[static_cast<size_t>(direction)];
-    if (!is_move_possible(pos, width, int(data.size()), target_pos))
-    {
-      break;
-    }
-    if (data[target_pos] == '#')
-    {
-      direction = direction_t((static_cast<size_t>(direction) + 1) % static_cast<size_t>(direction_t::max));
-      continue;
-    }
-    if (!visited[target_pos])
-    {
-      unique_steps++;
-    }
-    if (visited[target_pos] & uint8_t(1) << static_cast<size_t>(direction))
-    {
-      return {loop_detection_t::loop, unique_steps};
-    }
-    visited[target_pos] |= uint8_t(1) << static_cast<size_t>(direction);
-    pos = target_pos;
+    result.emplace_back(data.substr(current_pos, next_delimiter - current_pos));
+    current_pos = next_delimiter + 1;
+    next_delimiter = data.find(delimiter, current_pos);
   }
-  return {loop_detection_t::none, unique_steps};
+  if (current_pos < data.size())
+  {
+    result.emplace_back(data.substr(current_pos));
+  }
+  return result;
 }
 
-auto parse_file(const char* filename) -> std::pair<int, int>
+bool plus_multiply_can_make_valid_equation(const std::pair<int64_t, std::vector<int>> &equation)
 {
-  std::FILE* file = std::fopen(filename, "r");
-  if (!file) abort();
+  int permutations = 1 << (equation.second.size() - 1);
+  for (int i = 0; i < permutations; i++)
+  {
+    int64_t sum = equation.second[0];
+    for (int j = 0; j < equation.second.size() - 1; j++)
+    {
+      if (i & (1 << j))
+      {
+        sum += equation.second[j + 1];
+      }
+      else
+      {
+        sum *= equation.second[j + 1];
+      }
+    }
+    if (sum == equation.first)
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+
+int64_t concat(const int64_t a, const int64_t b)
+{
+  int shift = int(log10(b)) + 1;
+  auto multiplier = int64_t(pow(10, shift));
+  return a * multiplier + b;
+}
+
+// In debug this is fast enough, but in we could optimize it by not calculating the entire permutation per itteration
+bool plus_multiply_concat_can_make_valid_equation(const std::pair<int64_t, std::vector<int>> &equation)
+{
+  auto permutations = int(pow(3, equation.second.size() - 1));
+
+  for (int i = 0; i < permutations; i++)
+  {
+    int64_t sum = equation.second[0];
+    for (int j = 0; sum <= equation.first && j < equation.second.size() - 1; j++)
+    {
+      int op = (i / int(pow(3, j))) % 3;
+      if (op == 0)
+      {
+        sum = concat(sum, equation.second[j + 1]);
+      }
+      else if (op == 1)
+      {
+        sum *= equation.second[j + 1];
+      }
+      else
+      {
+        sum += equation.second[j + 1];
+      }
+    }
+    if (sum == equation.first)
+    {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+
+auto parse_file(const char *filename) -> std::pair<int64_t, int64_t>
+{
+  std::FILE *file = std::fopen(filename, "rb");
+  if (!file)
+    abort();
 
   std::fseek(file, 0, SEEK_END);
   auto size = std::ftell(file);
   std::rewind(file);
 
   std::string content(size, '\0');
-  std::fread(content.data(), 1, size, file);
+  size_t read = 0;
+  size_t local_read = 1;
+  while (local_read > 0 && read < size)
+  {
+    local_read = std::fread(content.data() + read, 1, size - read, file);
+    read += local_read;
+  }
+  if (read != size)
+    abort();
   std::fclose(file);
 
-  size_t next_newline = content.find('\n');
-  if (next_newline== std::string::npos)
+  auto lines = delimit(content, '\n');
+  std::vector<std::pair<int64_t, std::vector<int>>> equations;
+
+  for (auto &line : lines)
   {
-    abort();
-  }
-  int width = int(next_newline);
-  content.erase(std::remove(content.begin(), content.end(), '\n'), content.end());
-
-  size_t next_caret = content.find('^');
-  if (next_caret == std::string::npos)
-  {
-    abort();
-  }
-  int starting_pos = int(next_caret);
-
-  std::array<int, static_cast<size_t>(direction_t::max)> moves{};
-  moves[0] = -width;
-  moves[1] = 1;
-  moves[2] = width;
-  moves[3] = -1;
-
-  std::vector<uint8_t> visited(content.size());
-
-  auto walk_result = walk_guard(width, content, moves, starting_pos, direction_t::up, visited);
-  if (walk_result.first == loop_detection_t::loop)
-  {
-    abort();
-  }
-  auto part_one = walk_result.second;
-  auto original_visited = visited;
-
-  auto part_two = 0;
-  for (int i = 0; i < int(visited.size()); i++)
-  {
-    if (!original_visited[i])
+    auto sum_and_digits = delimit(line, ':');
+    if (sum_and_digits.size() != 2)
     {
-      continue;
+      abort();
     }
-    std::fill(visited.begin(), visited.end(), 0);
-    content[i] = '#';
-    auto walk = walk_guard(width, content, moves, starting_pos, direction_t::up, visited);
-    content[i] = ' ';
-    if (walk.first == loop_detection_t::loop)
+    auto sum = parse_int<int64_t>(sum_and_digits[0]);
+    if (!sum.has_value())
     {
-      part_two++;
+      abort();
+    }
+    auto &equation = equations.emplace_back(sum.value(), std::vector<int>());
+    auto constants = delimit(sum_and_digits[1], ' ');
+    for (auto &constant : constants)
+    {
+      if (constant.empty())
+      {
+        continue;
+      }
+      auto value = parse_int<int>(constant);
+      if (!value.has_value())
+      {
+        abort();
+      }
+      equation.second.emplace_back(value.value());
+    }
+  }
+
+  auto part_one = int64_t(0);
+
+  for (auto &equation : equations)
+  {
+    if (plus_multiply_can_make_valid_equation(equation))
+    {
+      part_one += equation.first;
+    }
+  }
+
+  auto part_two = int64_t(0);
+  for (auto &equation : equations)
+  {
+    if (plus_multiply_concat_can_make_valid_equation(equation))
+    {
+      part_two += equation.first;
     }
   }
 
@@ -131,7 +184,7 @@ auto parse_file(const char* filename) -> std::pair<int, int>
 
 int main()
 {
-  auto result = parse_file(CURRENT_SOURCE_DIR "/input");
-  std::printf("%s\n", std::format("moves found: {}, possible_loop_positions: {}", result.first, result.second).c_str());
+  auto [part_one, part_two] = parse_file(CURRENT_SOURCE_DIR "/input");
+  std::printf("%s\n", std::format("part one: {}, part two: {}", part_one, part_two).c_str());
   return 0;
 }
